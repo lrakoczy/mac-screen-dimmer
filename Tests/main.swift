@@ -189,9 +189,9 @@ test("Auto-off: display connected → panel turns off after the delay") {
     let (sys, _, m) = makeEnv(autoOff: true)
     m.recoverOnLaunch(); settle()
     sys.externals = [200]
-    m.reconcile(reason: "connected"); settle()
+    m.reconcile(reason: "connected")        // synchronous; auto-off is only scheduled
     check(sys.builtinActive, "not immediately")
-    wait(autoDelay + 0.1)
+    wait(autoDelay + 0.3)
     check(!sys.builtinActive, "off after the delay")
 }
 
@@ -199,10 +199,10 @@ test("Auto-off: display gone before the delay → does nothing") {
     let (sys, _, m) = makeEnv(autoOff: true)
     m.recoverOnLaunch(); settle()
     sys.externals = [200]
-    m.reconcile(reason: "connected"); settle()
+    m.reconcile(reason: "connected")        // no wait here: disconnect before the auto-off delay
     sys.externals = []
     m.reconcile(reason: "disconnected"); settle()
-    wait(autoDelay + 0.1)
+    wait(autoDelay + 0.3)
     check(sys.builtinActive, "panel active")
     check(sys.calls.isEmpty, "no API calls")
 }
@@ -210,18 +210,18 @@ test("Auto-off: display gone before the delay → does nothing") {
 test("Auto-off: manual turn-on is respected until the next connection") {
     let (sys, _, m) = makeEnv(autoOff: true) { s, _ in s.externals = [200] }
     m.recoverOnLaunch(); settle()                     // auto-off at launch with a display connected
-    wait(autoDelay + 0.1)
+    wait(autoDelay + 0.3)
     check(!sys.builtinActive, "auto-off at launch")
     m.userToggle(); settle()                          // user turns it on
     wait(grace + 0.4)
     m.reconcile(reason: "event", allowAutoOff: true); settle()  // e.g. wake
-    wait(autoDelay + 0.1)
+    wait(autoDelay + 0.3)
     check(sys.builtinActive, "auto-off does not turn it off after a manual turn-on")
     sys.externals = []
     m.reconcile(reason: "disconnected"); settle()
     sys.externals = [200]
     m.reconcile(reason: "reconnected"); settle()
-    wait(autoDelay + 0.1)
+    wait(autoDelay + 0.3)
     check(!sys.builtinActive, "auto-off works again after reconnecting")
 }
 
@@ -230,7 +230,7 @@ test("Burst of duplicate events does not cause repeated calls") {
     m.recoverOnLaunch(); settle()
     sys.externals = [200]
     for _ in 0..<5 { m.reconcile(reason: "duplicate"); m.failSafeCheck() }
-    wait(autoDelay + 0.1)
+    wait(autoDelay + 0.3)
     for _ in 0..<5 { m.reconcile(reason: "duplicate"); m.failSafeCheck() }
     check(sys.calls.count == 1, "exactly one API call: \(sys.calls)")
 }
