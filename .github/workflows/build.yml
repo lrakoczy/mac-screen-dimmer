@@ -8,7 +8,7 @@ jobs:
   build:
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Toolchain
         run: |
@@ -32,7 +32,7 @@ jobs:
       - name: Package
         run: ditto -c -k --keepParent build/ScreenDimmer.app build/ScreenDimmer.zip
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: ScreenDimmer
           path: build/ScreenDimmer.zip

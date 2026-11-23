@@ -37,7 +37,7 @@ The script compiles the sources with `swiftc` for `x86_64` and `arm64` (`-target
 
 ### Running on another Mac
 
-If you copy the `.app` over AirDrop or download it, Gatekeeper will block it. Right-click it → **Open**, or remove the quarantine attribute:
+The app is only ad-hoc signed (not notarized), so if you copy it over AirDrop or download it, Gatekeeper will block it on first launch. On macOS 14, right-click it → **Open**. On macOS 15 and later, try to open it once, then go to System Settings → Privacy & Security and click **Open Anyway**. Alternatively, remove the quarantine attribute:
 
 ```bash
 xattr -dr com.apple.quarantine ScreenDimmer.app
