@@ -17,6 +17,10 @@ A tiny macOS menu bar app (no Dock icon) that turns the MacBook's **built-in dis
 - Status line: no external display / external display(s) active / built-in display off / lid closed / API not supported
 - **Quit** always turns the built-in display back on first
 
+## Download
+
+Get the latest `ScreenDimmer-x.y.z.zip` from [Releases](https://github.com/lrakoczy/mac-screen-dimmer/releases/latest), unzip it, move `ScreenDimmer.app` to Applications and see [Running on another Mac](#running-on-another-mac) for the first launch.
+
 ## Building
 
 Only the Command Line Tools are required (`xcode-select --install`). No Xcode, no SwiftPM, no paid Apple Developer account.
@@ -43,7 +47,16 @@ The app is only ad-hoc signed (not notarized), so if you copy it over AirDrop or
 xattr -dr com.apple.quarantine ScreenDimmer.app
 ```
 
-Builds from [GitHub Actions](.github/workflows/build.yml) are attached to each run as an artifact and are ad-hoc signed as well.
+Release builds are produced by [GitHub Actions](.github/workflows/release.yml) and are ad-hoc signed the same way.
+
+### Making a release
+
+Push a version tag; the [release workflow](.github/workflows/release.yml) runs the tests, builds the universal app with the version taken from the tag and publishes a GitHub release with the zip and its SHA-256:
+
+```bash
+git tag v1.2.3
+git push origin v1.2.3
+```
 
 ## Safety
 

@@ -1,0 +1,67 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set version from tag
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          plutil -replace CFBundleShortVersionString -string "$VERSION" Resources/Info.plist
+          plutil -replace CFBundleVersion -string "${{ github.run_number }}" Resources/Info.plist
+          plutil -p Resources/Info.plist | grep -E "CFBundle(ShortVersionString|Version)\""
+
+      - name: Logic tests
+        run: ./scripts/test.sh
+
+      - name: Build universal app
+        run: ./scripts/build-app.sh
+
+      - name: Verify bundle
+        run: |
+          archs=$(lipo -archs build/ScreenDimmer.app/Contents/MacOS/ScreenDimmer)
+          [[ "$archs" == *x86_64* && "$archs" == *arm64* ]]
+          codesign --verify --strict build/ScreenDimmer.app
+
+      - name: Package
+        run: |
+          ZIP="ScreenDimmer-${VERSION}.zip"
+          ditto -c -k --keepParent build/ScreenDimmer.app "build/$ZIP"
+          (cd build && shasum -a 256 "$ZIP" > "$ZIP.sha256")
+          echo "ZIP=$ZIP" >> "$GITHUB_ENV"
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          SHA=$(cut -d' ' -f1 "build/$ZIP.sha256")
+          cat > build/notes.md <<NOTES
+          Universal build for **macOS 14 Sonoma or later**, Intel and Apple Silicon.
+
+          ### Install
+          1. Download \`$ZIP\`, unzip it and move \`ScreenDimmer.app\` to Applications.
+          2. The app is ad-hoc signed, not notarized, so Gatekeeper blocks the first launch:
+             - macOS 14: right-click the app → **Open**.
+             - macOS 15 and later: try to open it once, then System Settings → Privacy & Security → **Open Anyway**.
+             - Or run: \`xattr -dr com.apple.quarantine /Applications/ScreenDimmer.app\`
+
+          > ScreenDimmer uses an undocumented, private macOS API and may stop working with a macOS update. Use at your own risk.
+
+          SHA-256 (\`$ZIP\`): \`$SHA\`
+          NOTES
+          gh release create "$GITHUB_REF_NAME" "build/$ZIP" "build/$ZIP.sha256" \
+            --title "ScreenDimmer $VERSION" \
+            --notes-file build/notes.md \
+            --generate-notes \
+            --verify-tag
