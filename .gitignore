@@ -1,0 +1,20 @@
+# Build output
+build/
+.build/
+DerivedData/
+*.dSYM/
+*.zip
+
+# SwiftPM / Xcode user data
+.swiftpm/
+xcuserdata/
+*.xcodeproj/project.xcworkspace/xcuserdata/
+
+# Editors and OS
+.DS_Store
+.vscode/
+.idea/
+*.swp
+
+# Local notes (original Polish spec; English version is docs/SPEC.md)
+Wygaszanie ekranu macbook.md

@@ -1,0 +1,38 @@
+name: Build
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Toolchain
+        run: |
+          xcrun swiftc --version
+          xcrun --sdk macosx --show-sdk-path
+
+      - name: Logic tests
+        run: ./scripts/test.sh
+
+      - name: Build universal app
+        run: ./scripts/build-app.sh
+
+      - name: Verify bundle
+        run: |
+          archs=$(lipo -archs build/ScreenDimmer.app/Contents/MacOS/ScreenDimmer)
+          echo "Architectures: $archs"
+          [[ "$archs" == *x86_64* && "$archs" == *arm64* ]]
+          plutil -lint build/ScreenDimmer.app/Contents/Info.plist build/ScreenDimmer.app/Contents/Resources/*.lproj/Localizable.strings
+          codesign --verify --strict build/ScreenDimmer.app
+
+      - name: Package
+        run: ditto -c -k --keepParent build/ScreenDimmer.app build/ScreenDimmer.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ScreenDimmer
+          path: build/ScreenDimmer.zip
