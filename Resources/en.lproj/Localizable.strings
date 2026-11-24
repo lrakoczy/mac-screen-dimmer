@@ -1,3 +1,9 @@
+"alert.cancel" = "Cancel";
+"alert.loginApproval.text" = "To launch ScreenDimmer at login, allow it in System Settings → General → Login Items.";
+"alert.loginApproval.title" = "Approval Required";
+"alert.loginError.title" = "Could Not Change Launch at Login";
+"alert.ok" = "OK";
+"alert.openSettings" = "Open System Settings";
 "error.begin" = "CGBeginDisplayConfiguration failed (code %ld)";
 "error.builtinUnavailable" = "The built-in display is unavailable";
 "error.complete" = "CGCompleteDisplayConfiguration failed (code %ld)";
@@ -5,6 +11,7 @@
 "error.helper" = "Helper process: %@";
 "error.helperExit" = "exit code %ld %@";
 "error.helperTimeout" = "timed out after %ld s";
+"error.loginItemNotFound" = "macOS did not register the app. Move ScreenDimmer.app to the Applications folder and try again.";
 "error.noExternal" = "Cannot turn off – no external display connected";
 "error.unknownBuiltinID" = "Unknown built-in display identifier";
 "error.unsupported" = "The private API is unavailable on this macOS version";
@@ -12,6 +19,8 @@
 "icon.builtinOn" = "ScreenDimmer – built-in display on";
 "icon.unsupported" = "ScreenDimmer – not supported";
 "menu.autoOff" = "Turn Off Automatically When a Display Is Connected";
+"menu.launchAtLogin" = "Launch at Login";
+"menu.launchAtLogin.pending" = "Waiting for approval in System Settings → General → Login Items";
 "menu.method" = "Method: %@";
 "menu.quit" = "Quit ScreenDimmer";
 "menu.turnOff" = "Turn Off Built-in Display";

@@ -14,7 +14,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         installSignalHandlers()
 
-        menuController = StatusMenuController(manager: manager) { NSApp.terminate(nil) }
+        menuController = StatusMenuController(
+            manager: manager,
+            loginItem: LoginItemController(service: SystemLoginItemService())
+        ) { NSApp.terminate(nil) }
         manager.onChange = { [weak self] in self?.menuController?.refresh() }
 
         events.onImmediate = { [weak self] in self?.manager.failSafeCheck() }

@@ -298,5 +298,85 @@ test("Main thread is not blocked by a slow operation") {
     check(!sys.builtinActive, "panel off after completion")
 }
 
+// MARK: - Launch at Login
+
+final class FakeLoginItemService: LoginItemService {
+    struct Failure: LocalizedError { var errorDescription: String? { "boom" } }
+    var state: LoginItemState = .disabled
+    var stateAfterRegister: LoginItemState = .enabled
+    var throwOnRegister = false
+    var throwOnUnregister = false
+    var registerCalls = 0
+    var unregisterCalls = 0
+
+    func register() throws {
+        registerCalls += 1
+        if throwOnRegister { throw Failure() }
+        state = stateAfterRegister
+    }
+
+    func unregister() throws {
+        unregisterCalls += 1
+        if throwOnUnregister { throw Failure() }
+        state = .disabled
+    }
+}
+
+test("Launch at Login: off → on → off") {
+    let svc = FakeLoginItemService()
+    let c = LoginItemController(service: svc)
+    check(!c.isOn && !c.isPending, "initially off")
+    check(c.toggle() == .enabled, "registered")
+    check(c.isOn && svc.registerCalls == 1, "on after toggle")
+    check(c.toggle() == .disabled, "unregistered")
+    check(!c.isOn && svc.unregisterCalls == 1, "off after second toggle")
+}
+
+test("Launch at Login: state follows the system (changed in System Settings)") {
+    let svc = FakeLoginItemService()
+    let c = LoginItemController(service: svc)
+    svc.state = .enabled
+    check(c.isOn, "picked up external enable")
+    svc.state = .requiresApproval
+    check(!c.isOn && c.isPending, "pending shown as mixed")
+}
+
+test("Launch at Login: approval required after register") {
+    let svc = FakeLoginItemService()
+    svc.stateAfterRegister = .requiresApproval
+    let c = LoginItemController(service: svc)
+    check(c.toggle() == .needsApproval, "needs approval")
+    check(c.isPending, "pending")
+}
+
+test("Launch at Login: pending approval → toggle does not touch the system") {
+    let svc = FakeLoginItemService()
+    svc.state = .requiresApproval
+    let c = LoginItemController(service: svc)
+    check(c.toggle() == .needsApproval, "needs approval")
+    check(svc.registerCalls == 0 && svc.unregisterCalls == 0, "no calls")
+}
+
+test("Launch at Login: errors are reported, not swallowed") {
+    let svc = FakeLoginItemService()
+    svc.throwOnRegister = true
+    let c = LoginItemController(service: svc)
+    check(c.toggle() == .failed("boom"), "register error surfaced")
+    check(!c.isOn, "still off")
+
+    svc.state = .enabled
+    svc.throwOnUnregister = true
+    check(c.toggle() == .failed("boom"), "unregister error surfaced")
+    check(c.isOn, "still on")
+}
+
+test("Launch at Login: register silently ignored (notFound) → error") {
+    let svc = FakeLoginItemService()
+    svc.state = .notFound
+    svc.stateAfterRegister = .notFound
+    let c = LoginItemController(service: svc)
+    if case .failed = c.toggle() {} else { check(false, "expected failure") }
+}
+
 print(failures == 0 ? "\nALL TESTS PASSED" : "\nFAILED ASSERTIONS: \(failures)")
 exit(failures == 0 ? 0 : 1)

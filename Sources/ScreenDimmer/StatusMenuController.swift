@@ -3,12 +3,15 @@ import AppKit
 /// Menu bar icon and its menu.
 final class StatusMenuController: NSObject, NSMenuDelegate {
     private let manager: DisplayManager
+    private let loginItem: LoginItemController
+    private weak var loginMenuItem: NSMenuItem?
     private let statusItem: NSStatusItem
     private let menu = NSMenu()
     private let onQuit: () -> Void
 
-    init(manager: DisplayManager, onQuit: @escaping () -> Void) {
+    init(manager: DisplayManager, loginItem: LoginItemController, onQuit: @escaping () -> Void) {
         self.manager = manager
+        self.loginItem = loginItem
         self.onQuit = onQuit
         self.statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         super.init()
@@ -25,6 +28,8 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
 
     func menuWillOpen(_ menu: NSMenu) {
         manager.reconcile(reason: "menu opened")
+        // Re-read Launch at Login – the user may have changed it in System Settings.
+        updateLoginMenuItem()
     }
 
     // MARK: - Icon
@@ -89,11 +94,26 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         auto.isEnabled = manager.isSupported
         menu.addItem(auto)
 
+        let login = NSMenuItem(title: L("menu.launchAtLogin", "Launch at Login"),
+                               action: #selector(toggleLaunchAtLogin), keyEquivalent: "")
+        login.target = self
+        menu.addItem(login)
+        loginMenuItem = login
+        updateLoginMenuItem()
+
         menu.addItem(.separator())
 
         let quit = NSMenuItem(title: L("menu.quit", "Quit ScreenDimmer"), action: #selector(quit), keyEquivalent: "q")
         quit.target = self
         menu.addItem(quit)
+    }
+
+    private func updateLoginMenuItem() {
+        guard let item = loginMenuItem else { return }
+        item.state = loginItem.isOn ? .on : (loginItem.isPending ? .mixed : .off)
+        item.toolTip = loginItem.isPending
+            ? L("menu.launchAtLogin.pending", "Waiting for approval in System Settings → General → Login Items")
+            : nil
     }
 
     private var statusText: String {
@@ -133,6 +153,38 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
 
     @objc private func toggleAutoOff() {
         manager.autoOff.toggle()
+    }
+
+    @objc private func toggleLaunchAtLogin() {
+        switch loginItem.toggle() {
+        case .enabled, .disabled:
+            break
+        case .needsApproval:
+            let alert = NSAlert()
+            alert.messageText = L("alert.loginApproval.title", "Approval Required")
+            alert.informativeText = L("alert.loginApproval.text",
+                "To launch ScreenDimmer at login, allow it in System Settings → General → Login Items.")
+            alert.addButton(withTitle: L("alert.openSettings", "Open System Settings"))
+            alert.addButton(withTitle: L("alert.cancel", "Cancel"))
+            if runAlert(alert) == .alertFirstButtonReturn {
+                loginItem.openSystemSettings()
+            }
+        case .failed(let message):
+            let alert = NSAlert()
+            alert.alertStyle = .warning
+            alert.messageText = L("alert.loginError.title", "Could Not Change Launch at Login")
+            alert.informativeText = message
+            alert.addButton(withTitle: L("alert.ok", "OK"))
+            runAlert(alert)
+        }
+        updateLoginMenuItem()
+    }
+
+    /// The app has no Dock icon (LSUIElement), so it must be activated for the alert to come to the front.
+    @discardableResult
+    private func runAlert(_ alert: NSAlert) -> NSApplication.ModalResponse {
+        NSApp.activate(ignoringOtherApps: true)
+        return alert.runModal()
     }
 
     @objc private func quit() {
