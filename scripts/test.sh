@@ -16,5 +16,5 @@ YAML
 fi
 xcrun swiftc -swift-version 5 ${EXTRA_FLAGS[@]+"${EXTRA_FLAGS[@]}"} -module-name ScreenDimmerTests \
     Sources/ScreenDimmer/DisplayAPI.swift Sources/ScreenDimmer/DisplayManager.swift \
-    Sources/ScreenDimmer/Preferences.swift Sources/ScreenDimmer/Localization.swift Tests/main.swift -o "$OBJ/tests"
+    Sources/ScreenDimmer/Preferences.swift Sources/ScreenDimmer/Localization.swift Sources/ScreenDimmer/LoginItem.swift Tests/main.swift -o "$OBJ/tests"
 "$OBJ/tests"

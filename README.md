@@ -14,6 +14,7 @@ A tiny macOS menu bar app (no Dock icon) that turns the MacBook's **built-in dis
 - Menu bar icon showing whether the built-in display is on or off
 - **Turn Off / Turn On Built-in Display**
 - **Turn Off Automatically When a Display Is Connected** (remembered between launches)
+- **Launch at Login** – registers the app in System Settings → General → Login Items (`SMAppService`); the checkmark always reflects the system setting. Works best with the app in `/Applications`.
 - Status line: no external display / external display(s) active / built-in display off / lid closed / API not supported
 - **Quit** always turns the built-in display back on first
 
@@ -112,6 +113,7 @@ Runs 19 logic scenarios against a display simulator that reproduces the measured
 6. Panel off, `pkill ScreenDimmer` → the panel comes back.
 7. Panel off, `pkill -9 ScreenDimmer`, launch again → the panel comes back.
 8. After sleep and wake the menu status matches reality.
+9. App in `/Applications`, enable Launch at Login → it appears in Login Items; log out and in → the app starts. Turn it off in System Settings → the menu checkmark clears.
 
 ## Diagnostics
 
@@ -137,6 +139,7 @@ Sources/ScreenDimmer/
   DisplayManager.swift       state, safety rules, sync with the system state, auto-off
   DisplayEventMonitor.swift  display reconfiguration and wake events, debouncing
   StatusMenuController.swift menu bar icon and menu
+  LoginItem.swift            Launch at Login (SMAppService.mainApp)
   Preferences.swift          UserDefaults
   Localization.swift         L() – localized strings (en default, pl)
 Resources/Info.plist         LSUIElement, LSMinimumSystemVersion 14.0, CFBundleLocalizations en/pl
