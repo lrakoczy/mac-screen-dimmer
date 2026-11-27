@@ -26,9 +26,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         events.start()
 
+        logEnvironment()
         // First recover from a possible crash of a previous instance, then sync normally.
         manager.recoverOnLaunch()
         log.info("Launched. API supported: \(self.api.isSupported)")
+    }
+
+    /// Everything a bug report needs about this machine, in one log line.
+    private func logEnvironment() {
+        let info = Bundle.main.infoDictionary ?? [:]
+        let version = info["CFBundleShortVersionString"] as? String ?? "?"
+        let build = info["CFBundleVersion"] as? String ?? "?"
+        let os = ProcessInfo.processInfo.operatingSystemVersionString   // "Version 14.8 (Build 23J631)"
+            .replacingOccurrences(of: "Version ", with: "")
+        let defaults = prefs.diagnosticDescription
+        log.notice("ScreenDimmer \(version, privacy: .public) (\(build, privacy: .public)) on macOS \(os, privacy: .public), \(Self.hardwareModel(), privacy: .public) \(Self.architecture, privacy: .public); API: \(self.api.resolvedSymbolDescription ?? "unsupported", privacy: .public); prefs: \(defaults, privacy: .public)")
+    }
+
+    private static func hardwareModel() -> String {
+        var size = 0
+        guard sysctlbyname("hw.model", nil, &size, nil, 0) == 0, size > 0 else { return "unknown model" }
+        var buf = [CChar](repeating: 0, count: size)
+        guard sysctlbyname("hw.model", &buf, &size, nil, 0) == 0 else { return "unknown model" }
+        return String(cString: buf)
+    }
+
+    private static var architecture: String {
+        #if arch(arm64)
+        return "arm64"
+        #else
+        return "x86_64"
+        #endif
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -63,5 +91,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         toggle.resume()
         signalSources.append(toggle)
+
+        // SIGUSR2 – write the full state and display list to the log: `pkill -USR2 ScreenDimmer`.
+        signal(SIGUSR2, SIG_IGN)
+        let dump = DispatchSource.makeSignalSource(signal: SIGUSR2, queue: .main)
+        dump.setEventHandler { [weak self] in
+            self?.logEnvironment()
+            self?.manager.logDiagnostics()
+        }
+        dump.resume()
+        signalSources.append(dump)
     }
 }

@@ -146,14 +146,17 @@ final class DisplayAPI {
         let deadline = Date().addingTimeInterval(Self.helperTimeout)
         while finished.wait(timeout: .now() + 0.1) == .timedOut {
             let elapsed = Date().timeIntervalSince(started)
-            if elapsed > 0.3, CGDisplayIsOnline(display) != 0, (CGDisplayIsActive(display) != 0) == enabled {
+            let online = CGDisplayIsOnline(display) != 0
+            let active = online && CGDisplayIsActive(display) != 0
+            if elapsed > 0.3, Self.targetReached(enabled: enabled, online: online, active: active) {
                 process.terminate()
                 _ = finished.wait(timeout: .now() + 2)
-                Self.log.notice("Target state confirmed by the system after \(String(format: "%.2f", elapsed), privacy: .public) s – ending the waiting helper")
+                Self.log.notice("Target state confirmed by the system after \(String(format: "%.2f", elapsed), privacy: .public) s (online=\(online) active=\(active)) – ending the waiting helper")
                 return .success(())
             }
             if Date() > deadline {
                 process.terminate()
+                Self.log.error("Helper timed out after \(Int(Self.helperTimeout)) s; display \(display) online=\(online) active=\(active), target=\(enabled ? "on" : "off", privacy: .public)")
                 return .failure(.helperFailed(L("error.helperTimeout", "timed out after %ld s", Int(Self.helperTimeout))))
             }
         }
@@ -161,6 +164,12 @@ final class DisplayAPI {
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         Self.log.notice("Helper finished (status \(process.terminationStatus)) in \(String(format: "%.2f", Date().timeIntervalSince(started)), privacy: .public) s: \(text, privacy: .public)")
         return Self.decodeHelperResult(status: process.terminationStatus, output: text)
+    }
+
+    /// Whether the polled display state matches the target. Turning the panel off is confirmed
+    /// both by "online but inactive" (macOS 14) and by "gone from the online list" (macOS 27).
+    static func targetReached(enabled: Bool, online: Bool, active: Bool) -> Bool {
+        enabled ? (online && active) : !active
     }
 
     /// Entry point of the helper process (called from main.swift). Returns the exit code.
