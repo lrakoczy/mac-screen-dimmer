@@ -21,10 +21,11 @@
 	<string>ScreenDimmer</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
+	<!-- Placeholders: scripts/build-app.sh writes the real version from git tags into the built app. -->
 	<key>CFBundleShortVersionString</key>
-	<string>1.0.0</string>
+	<string>0.0.0</string>
 	<key>CFBundleVersion</key>
-	<string>1</string>
+	<string>0</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>14.0</string>
 	<key>LSUIElement</key>

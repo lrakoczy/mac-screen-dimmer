@@ -37,9 +37,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let info = Bundle.main.infoDictionary ?? [:]
         let version = info["CFBundleShortVersionString"] as? String ?? "?"
         let build = info["CFBundleVersion"] as? String ?? "?"
+        let revision = info["ScreenDimmerSourceRevision"] as? String ?? "unknown revision"
         let os = Self.osVersion()
         let defaults = prefs.diagnosticDescription
-        log.notice("ScreenDimmer \(version, privacy: .public) (\(build, privacy: .public)) on macOS \(os, privacy: .public), \(Self.hardwareModel(), privacy: .public) \(Self.architecture, privacy: .public); API: \(self.api.resolvedSymbolDescription ?? "unsupported", privacy: .public); prefs: \(defaults, privacy: .public)")
+        log.notice("ScreenDimmer \(version, privacy: .public) (\(build, privacy: .public), \(revision, privacy: .public)) on macOS \(os, privacy: .public), \(Self.hardwareModel(), privacy: .public) \(Self.architecture, privacy: .public); API: \(self.api.resolvedSymbolDescription ?? "unsupported", privacy: .public); prefs: \(defaults, privacy: .public)")
     }
 
     /// e.g. "27.2.1 (26B131)" – built from numbers, not `operatingSystemVersionString`,

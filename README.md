@@ -50,6 +50,8 @@ xattr -dr com.apple.quarantine ScreenDimmer.app
 
 Release builds are produced by [GitHub Actions](.github/workflows/release.yml) and are ad-hoc signed the same way.
 
+The version is taken from git, not from `Resources/Info.plist` (which only holds placeholders): the build script writes the latest `v*` tag as the version, the commit count as the build number and `git describe` (e.g. `v1.1.1-3-gabc1234-dirty`) as the source revision into the built app. The launch log shows all three. `VERSION` and `BUILD_NUMBER` environment variables override the first two.
+
 ### Making a release
 
 Push a version tag; the [release workflow](.github/workflows/release.yml) runs the tests, builds the universal app with the version taken from the tag and publishes a GitHub release with the zip and its SHA-256:
