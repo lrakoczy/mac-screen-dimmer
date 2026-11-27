@@ -30,6 +30,29 @@ YAML
     EXTRA_FLAGS+=(-vfsoverlay "$OBJ/vfs.yaml")
 fi
 
+# Version numbers are written into the built bundle only (Resources/Info.plist stays as is):
+# - CFBundleShortVersionString: $VERSION, else the latest v* tag (v1.2.3 -> 1.2.3)
+# - CFBundleVersion: $BUILD_NUMBER, else the number of commits (full clones only)
+# - ScreenDimmerSourceRevision: `git describe`, e.g. v1.2.3-4-gabc1234-dirty
+# Without git (e.g. a source zip) the placeholders from Resources/Info.plist are kept.
+set_version() {
+    local plist="$APP/Contents/Info.plist" version="${VERSION:-}" build="${BUILD_NUMBER:-}" revision=""
+    if git rev-parse --git-dir >/dev/null 2>&1; then
+        if [[ -z "$version" ]]; then
+            version=$(git describe --tags --abbrev=0 --match 'v[0-9]*' 2>/dev/null || true)
+            version="${version#v}"
+        fi
+        if [[ -z "$build" && "$(git rev-parse --is-shallow-repository)" == "false" ]]; then
+            build=$(git rev-list --count HEAD)
+        fi
+        revision=$(git describe --tags --always --dirty --match 'v[0-9]*' 2>/dev/null || true)
+    fi
+    [[ -n "$version" ]] && plutil -replace CFBundleShortVersionString -string "$version" "$plist"
+    [[ -n "$build" ]] && plutil -replace CFBundleVersion -string "$build" "$plist"
+    [[ -n "$revision" ]] && plutil -replace ScreenDimmerSourceRevision -string "$revision" "$plist"
+    echo "==> Version $(plutil -extract CFBundleShortVersionString raw "$plist") ($(plutil -extract CFBundleVersion raw "$plist")), revision ${revision:-unknown}"
+}
+
 binaries=()
 for arch in "${ARCHS[@]}"; do
     target="${arch}-apple-macosx${MIN_OS}"
@@ -48,6 +71,7 @@ done
 echo "==> Assembling ${APP}"
 lipo -create "${binaries[@]}" -output "$APP/Contents/MacOS/${APP_NAME}"
 cp Resources/Info.plist "$APP/Contents/Info.plist"
+set_version
 cp -R Resources/*.lproj "$APP/Contents/Resources/"
 printf 'APPL????' > "$APP/Contents/PkgInfo"
 
