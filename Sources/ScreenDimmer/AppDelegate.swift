@@ -26,9 +26,48 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         events.start()
 
+        logEnvironment()
         // First recover from a possible crash of a previous instance, then sync normally.
         manager.recoverOnLaunch()
         log.info("Launched. API supported: \(self.api.isSupported)")
+    }
+
+    /// Everything a bug report needs about this machine, in one log line.
+    private func logEnvironment() {
+        let info = Bundle.main.infoDictionary ?? [:]
+        let version = info["CFBundleShortVersionString"] as? String ?? "?"
+        let build = info["CFBundleVersion"] as? String ?? "?"
+        let os = Self.osVersion()
+        let defaults = prefs.diagnosticDescription
+        log.notice("ScreenDimmer \(version, privacy: .public) (\(build, privacy: .public)) on macOS \(os, privacy: .public), \(Self.hardwareModel(), privacy: .public) \(Self.architecture, privacy: .public); API: \(self.api.resolvedSymbolDescription ?? "unsupported", privacy: .public); prefs: \(defaults, privacy: .public)")
+    }
+
+    /// e.g. "27.2.1 (26B131)" – built from numbers, not `operatingSystemVersionString`,
+    /// which is localized ("Wersja 27.2.1 (kompilacja 26B131)").
+    private static func osVersion() -> String {
+        let v = ProcessInfo.processInfo.operatingSystemVersion
+        let build = sysctlString("kern.osversion") ?? "?"
+        return "\(v.majorVersion).\(v.minorVersion).\(v.patchVersion) (\(build))"
+    }
+
+    private static func hardwareModel() -> String {
+        sysctlString("hw.model") ?? "unknown model"
+    }
+
+    private static func sysctlString(_ name: String) -> String? {
+        var size = 0
+        guard sysctlbyname(name, nil, &size, nil, 0) == 0, size > 0 else { return nil }
+        var buf = [CChar](repeating: 0, count: size)
+        guard sysctlbyname(name, &buf, &size, nil, 0) == 0 else { return nil }
+        return String(cString: buf)
+    }
+
+    private static var architecture: String {
+        #if arch(arm64)
+        return "arm64"
+        #else
+        return "x86_64"
+        #endif
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -63,5 +102,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         toggle.resume()
         signalSources.append(toggle)
+
+        // SIGUSR2 – write the full state and display list to the log: `pkill -USR2 ScreenDimmer`.
+        signal(SIGUSR2, SIG_IGN)
+        let dump = DispatchSource.makeSignalSource(signal: SIGUSR2, queue: .main)
+        dump.setEventHandler { [weak self] in
+            self?.logEnvironment()
+            self?.manager.logDiagnostics()
+        }
+        dump.resume()
+        signalSources.append(dump)
     }
 }

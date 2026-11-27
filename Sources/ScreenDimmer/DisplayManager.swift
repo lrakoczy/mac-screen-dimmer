@@ -2,22 +2,134 @@ import CoreGraphics
 import Foundation
 import os
 
+/// Properties of one online display, read from public CoreGraphics calls. Used to tell real
+/// monitors from virtual displays, and logged for diagnostics.
+struct DisplayInfo: Equatable {
+    /// `kDisplayVendorIDUnknown` ('unkn') – reported when there is no EDID to read the vendor from.
+    static let vendorUnknown: UInt32 = 0x756E_6B6E
+    /// 'virt' – model number of the WindowServer fallback display (measured on macOS 27.2.1, issue #3).
+    static let modelVirtual: UInt32 = 0x7669_7274
+
+    let id: CGDirectDisplayID
+    let isBuiltin: Bool
+    let isActive: Bool
+    let isAsleep: Bool
+    let isMain: Bool
+    /// Display this one mirrors (`kCGNullDirectDisplay` = none).
+    let mirrorOf: CGDirectDisplayID
+    let vendor: UInt32
+    let model: UInt32
+    let hasSerial: Bool
+    /// Physical size from EDID in millimeters. Without an EDID, CoreGraphics returns an estimate
+    /// from the pixel size at 72 DPI (1920×1080 → 677×381 mm), so this is not proof of a real monitor.
+    let sizeMM: CGSize
+    let pixelsWide: Int
+    let pixelsHigh: Int
+    let refreshRate: Double
+
+    /// Why this display is treated as virtual, or `nil` for a real (physical) one.
+    ///
+    /// When the last physical display goes away while the built-in panel is off, WindowServer
+    /// brings up a fallback `VirtualDisplay` (1920×1080, new ID every time, issue #3). It is
+    /// online and active but is not a monitor, so it must not count as an external display.
+    /// Real monitors (and HDMI dummy plugs) have an EDID with a vendor ID; the fallback does not.
+    ///
+    /// Measured on Mac16,1 (M4), macOS 27.2.1: `vendor='unkn' model='virt' serial=no
+    /// size=677x381mm px=1920x1080 60Hz`. The size is the 72 DPI estimate, so only the
+    /// vendor and model identify it.
+    var virtualReason: String? {
+        if isBuiltin { return nil }
+        if model == Self.modelVirtual { return "virtual model" }
+        if vendor == 0 || vendor == Self.vendorUnknown || vendor == 0xFFFF_FFFF { return "no EDID vendor" }
+        if sizeMM.width < 1 || sizeMM.height < 1 { return "no physical size" }
+        return nil
+    }
+
+    var isVirtual: Bool { virtualReason != nil }
+
+    var kind: String {
+        if isBuiltin { return "builtin" }
+        return isVirtual ? "virtual" : "external"
+    }
+
+    /// One log line. Serial numbers are not logged, only whether one exists.
+    var logDescription: String {
+        var parts = [
+            "#\(id) \(kind)",
+            isActive ? "active" : "inactive",
+        ]
+        if isAsleep { parts.append("asleep") }
+        if isMain { parts.append("main") }
+        if mirrorOf != kCGNullDirectDisplay { parts.append("mirrors=#\(mirrorOf)") }
+        parts.append(String(format: "vendor=0x%X model=0x%X", vendor, model))
+        parts.append("serial=\(hasSerial ? "yes" : "no")")
+        parts.append(String(format: "size=%.0fx%.0fmm", sizeMM.width, sizeMM.height))
+        parts.append("px=\(pixelsWide)x\(pixelsHigh)")
+        parts.append(String(format: "%.2fHz", refreshRate))
+        if let reason = virtualReason { parts.append("(\(reason))") }
+        return parts.joined(separator: " ")
+    }
+
+    static func read(_ id: CGDirectDisplayID) -> DisplayInfo {
+        let mode = CGDisplayCopyDisplayMode(id)
+        return DisplayInfo(
+            id: id,
+            isBuiltin: CGDisplayIsBuiltin(id) != 0,
+            isActive: CGDisplayIsActive(id) != 0,
+            isAsleep: CGDisplayIsAsleep(id) != 0,
+            isMain: CGDisplayIsMain(id) != 0,
+            mirrorOf: CGDisplayMirrorsDisplay(id),
+            vendor: CGDisplayVendorNumber(id),
+            model: CGDisplayModelNumber(id),
+            hasSerial: CGDisplaySerialNumber(id) != 0,
+            sizeMM: CGDisplayScreenSize(id),
+            pixelsWide: mode?.pixelWidth ?? CGDisplayPixelsWide(id),
+            pixelsHigh: mode?.pixelHeight ?? CGDisplayPixelsHigh(id),
+            refreshRate: mode?.refreshRate ?? 0)
+    }
+}
+
 /// Snapshot of the actual display state.
 ///
-/// Measured macOS behavior: a built-in panel turned off with `CGSConfigureDisplayEnabled`
-/// **stays online** (`CGGetOnlineDisplayList`) but reports `CGDisplayIsActive == false`.
+/// Measured macOS behavior of a built-in panel turned off with `CGSConfigureDisplayEnabled`:
+/// - macOS 14.8 (Intel): the panel **stays online** (`CGGetOnlineDisplayList`) but reports
+///   `CGDisplayIsActive == false`.
+/// - macOS 27 (Apple Silicon, issue #3): the panel **disappears from the online list**, like with
+///   the lid closed. Its state is then known only from what the app did (`disabledByUs`).
 /// With the lid closed the panel disappears from the online list entirely.
 struct DisplaySnapshot: Equatable {
     /// ID of the built-in display if it is online (on, or turned off programmatically).
     let builtinID: CGDirectDisplayID?
     /// Whether the built-in display is active (showing an image).
     let builtinActive: Bool
-    /// Active displays other than the built-in one.
+    /// Active physical displays other than the built-in one.
     let externalIDs: [CGDirectDisplayID]
+    /// Active virtual displays (see `DisplayInfo.virtualReason`) – never count as external.
+    var virtualIDs: [CGDirectDisplayID] = []
+    /// All online displays with details, for diagnostics only (empty in tests).
+    var displays: [DisplayInfo] = []
 
     var hasExternal: Bool { !externalIDs.isEmpty }
     /// Online but inactive = turned off programmatically (by us or another tool).
     var builtinInactive: Bool { builtinID != nil && !builtinActive }
+
+    /// Classifies online displays. Pure – unit-tested with hand-made `DisplayInfo` values.
+    static func build(from displays: [DisplayInfo]) -> DisplaySnapshot {
+        var builtin: CGDirectDisplayID?
+        var builtinActive = false
+        var external: [CGDirectDisplayID] = []
+        var virtual: [CGDirectDisplayID] = []
+        for d in displays {
+            if d.isBuiltin {
+                builtin = d.id
+                builtinActive = d.isActive
+            } else if d.isActive {
+                if d.isVirtual { virtual.append(d.id) } else { external.append(d.id) }
+            }
+        }
+        return DisplaySnapshot(builtinID: builtin, builtinActive: builtinActive,
+                               externalIDs: external, virtualIDs: virtual, displays: displays)
+    }
 
     static func current() -> DisplaySnapshot {
         let empty = DisplaySnapshot(builtinID: nil, builtinActive: false, externalIDs: [])
@@ -25,19 +137,7 @@ struct DisplaySnapshot: Equatable {
         guard CGGetOnlineDisplayList(0, nil, &count) == .success else { return empty }
         var ids = [CGDirectDisplayID](repeating: 0, count: Int(count) + 8)
         guard CGGetOnlineDisplayList(UInt32(ids.count), &ids, &count) == .success else { return empty }
-
-        var builtin: CGDirectDisplayID?
-        var builtinActive = false
-        var external: [CGDirectDisplayID] = []
-        for id in ids.prefix(Int(count)) {
-            if CGDisplayIsBuiltin(id) != 0 {
-                builtin = id
-                builtinActive = CGDisplayIsActive(id) != 0
-            } else if CGDisplayIsActive(id) != 0 {
-                external.append(id)
-            }
-        }
-        return DisplaySnapshot(builtinID: builtin, builtinActive: builtinActive, externalIDs: external)
+        return build(from: ids.prefix(Int(count)).map(DisplayInfo.read))
     }
 }
 
@@ -101,6 +201,15 @@ final class DisplayManager {
     private var pendingGraceRecheck: DispatchWorkItem?
     private var deferredAllowAutoOff = false
     private var lastLoggedStatus: String?
+    private var lastLoggedInventory: String?
+    private var lastLoggedKeepOff: String?
+
+    /// External displays that were connected when the panel went off (`nil` = panel on / unknown).
+    ///
+    /// The panel stays off only while at least one of them is still connected. This does not
+    /// depend on telling real monitors from virtual ones: a display that shows up after the panel
+    /// went off (such as the WindowServer fallback display in issue #3) cannot keep it off.
+    private var anchorIDs: Set<CGDirectDisplayID>?
 
     /// For this long after our own change, trust the intended state rather than the snapshot (the system updates with a delay).
     private let ownChangeGrace: TimeInterval
@@ -203,10 +312,49 @@ final class DisplayManager {
     /// Fast safety path – called immediately on every event, without debouncing.
     func failSafeCheck() {
         let snap = system.snapshot()
-        guard !snap.hasExternal, disabledByUs || snap.builtinInactive, pendingTarget != true else { return }
-        log.notice("No external display while the panel is off – restoring immediately")
+        guard disabledByUs || snap.builtinInactive, pendingTarget != true else { return }
+        guard let why = lostExternalReason(snap) else {
+            logKeepingOff(snap)
+            return
+        }
+        log.notice("Panel is off and \(why, privacy: .public) – restoring immediately")
         snapshot = snap
         enable(reason: "external display disconnected")
+        publish()
+    }
+
+    /// Why the panel must not stay off in this state, or `nil` if it may.
+    private func lostExternalReason(_ snap: DisplaySnapshot) -> String? {
+        if !snap.hasExternal {
+            return snap.virtualIDs.isEmpty
+                ? "no external display is connected"
+                : "only virtual displays are left \(ids(snap.virtualIDs))"
+        }
+        if let anchors = anchorIDs, anchors.isDisjoint(with: snap.externalIDs) {
+            return "none of the displays it was turned off for is connected (was \(ids(anchors)), now \(ids(snap.externalIDs)))"
+        }
+        return nil
+    }
+
+    private func logKeepingOff(_ snap: DisplaySnapshot) {
+        guard pendingTarget != true else { return }   // turning on is already in progress
+        let anchors = anchorIDs.map { ids($0) } ?? "-"
+        let line = "Panel stays off: external=\(ids(snap.externalIDs)) virtual=\(ids(snap.virtualIDs)) anchors=\(anchors)"
+        guard line != lastLoggedKeepOff else { return }
+        lastLoggedKeepOff = line
+        log.notice("\(line, privacy: .public)")
+    }
+
+    private func ids<S: Sequence>(_ s: S) -> String where S.Element == CGDirectDisplayID {
+        "[" + s.sorted().map(String.init).joined(separator: ",") + "]"
+    }
+
+    /// Logs the full state on demand (`pkill -USR2 ScreenDimmer`), including every online display.
+    func logDiagnostics() {
+        snapshot = system.snapshot()
+        lastLoggedStatus = nil
+        lastLoggedInventory = nil
+        log.notice("Diagnostics: disabledByUs=\(self.disabledByUs) knownBuiltinID=\(self.knownBuiltinID.map(String.init) ?? "-", privacy: .public) anchors=\(self.anchorIDs.map { self.ids($0) } ?? "-", privacy: .public) userOverride=\(self.userOverride) pendingTarget=\(self.pendingTarget.map { $0 ? "on" : "off" } ?? "-", privacy: .public) inFlight=\(self.inFlight) lastError=\(self.lastError ?? "-", privacy: .public) api=\(self.system.resolvedSymbolDescription ?? "unsupported", privacy: .public)")
         publish()
     }
 
@@ -224,17 +372,24 @@ final class DisplayManager {
             } else if snap.builtinActive && disabledByUs {
                 log.notice("Built-in display active again without the app – syncing state")
                 disabledByUs = false
+                anchorIDs = nil
             } else if !snap.builtinActive && !disabledByUs {
                 log.notice("Built-in display turned off externally – syncing state")
                 disabledByUs = true
+                anchorIDs = Set(snap.externalIDs)
             }
         }
 
         let ext = snap.externalIDs.count
 
-        // Fail-safe: never leave the panel off without an external display.
-        if ext == 0 && (disabledByUs || snap.builtinInactive) {
-            enable(reason: "no external display")
+        // Fail-safe: never leave the panel off without one of the displays it was turned off for.
+        if disabledByUs || snap.builtinInactive {
+            if let why = lostExternalReason(snap) {
+                log.notice("Reconcile (\(reason, privacy: .public)): panel is off and \(why, privacy: .public) – restoring")
+                enable(reason: "no external display")
+            } else {
+                logKeepingOff(snap)
+            }
         }
 
         if ext == 0 {
@@ -254,12 +409,24 @@ final class DisplayManager {
     // MARK: - Implementation
 
     private func publish() {
-        let line = "state=\(status) off=\(isBuiltinDisabled) panel=\(snapshot.builtinID.map(String.init) ?? "-")/\(snapshot.builtinActive ? "active" : "inactive") external=\(snapshot.externalIDs.count) autoOff=\(prefs.autoOff) inFlight=\(inFlight)"
+        logInventoryIfChanged()
+        let line = "state=\(status) off=\(isBuiltinDisabled) panel=\(snapshot.builtinID.map(String.init) ?? "-")/\(snapshot.builtinActive ? "active" : "inactive") external=\(snapshot.externalIDs.count)\(ids(snapshot.externalIDs)) virtual=\(snapshot.virtualIDs.count)\(ids(snapshot.virtualIDs)) autoOff=\(prefs.autoOff) inFlight=\(inFlight)"
         if line != lastLoggedStatus {
             lastLoggedStatus = line
             log.notice("\(line, privacy: .public)")
         }
         onChange?()
+    }
+
+    /// Logs every online display (vendor, size, mode, how it was classified) whenever the set changes.
+    private func logInventoryIfChanged() {
+        guard !snapshot.displays.isEmpty else { return }
+        let lines = snapshot.displays.map(\.logDescription)
+        let joined = lines.joined(separator: "\n")
+        guard joined != lastLoggedInventory else { return }
+        lastLoggedInventory = joined
+        log.notice("Online displays (\(lines.count)):")
+        for line in lines { log.notice("  \(line, privacy: .public)") }
     }
 
     /// Applies the change on the worker queue; `completion` runs on the main thread.
@@ -306,6 +473,8 @@ final class DisplayManager {
 
         // Persist the intent BEFORE the call – if the process dies midway, launch recovery still works.
         disabledByUs = true
+        anchorIDs = Set(snap.externalIDs)
+        log.notice("Turning off built-in display \(id) (\(reason, privacy: .public)) for external \(self.ids(snap.externalIDs), privacy: .public), ignoring virtual \(self.ids(snap.virtualIDs), privacy: .public)")
         apply(id, enabled: false) { [weak self] result in
             guard let self else { return }
             switch result {
@@ -315,7 +484,7 @@ final class DisplayManager {
                 // The external display may have disappeared during the operation – check right away.
                 self.failSafeCheck()
             case .failure(let err):
-                if self.pendingTarget == nil { self.disabledByUs = false }
+                if self.pendingTarget == nil { self.disabledByUs = false; self.anchorIDs = nil }
                 self.lastOwnChange = .distantPast
                 self.lastError = err.description
                 self.log.error("Turning off failed: \(err.description, privacy: .public)")
@@ -337,7 +506,11 @@ final class DisplayManager {
             guard let self else { return }
             switch result {
             case .success:
-                if self.pendingTarget == nil { self.disabledByUs = false }
+                if self.pendingTarget == nil {
+                    self.disabledByUs = false
+                    self.anchorIDs = nil
+                    self.lastLoggedKeepOff = nil
+                }
                 self.lastError = nil
                 self.log.notice("Restored built-in display \(id) (\(reason, privacy: .public))")
             case .failure(let err):

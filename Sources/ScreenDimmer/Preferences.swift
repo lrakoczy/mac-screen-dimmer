@@ -43,4 +43,9 @@ final class Preferences {
             defaults.synchronize()
         }
     }
+
+    /// Stored values as one line for the launch log, e.g. `autoOff=false builtinID=1 disabledByUs=true`.
+    var diagnosticDescription: String {
+        "autoOff=\(autoOff) builtinID=\(builtinID.map(String.init) ?? "-") disabledByUs=\(disabledByUs)"
+    }
 }

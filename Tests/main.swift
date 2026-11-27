@@ -11,16 +11,27 @@ final class FakeSystem: DisplaySystem {
     var builtinID: CGDirectDisplayID = 100
     var builtinOnline = true          // false = lid closed
     var builtinActive = true
+    /// macOS 27 (issue #3): a panel turned off disappears from the online list.
+    var offlineWhenDisabled = false
     var externals: [CGDirectDisplayID] = []
+    /// Displays already recognized as virtual by `DisplayInfo` (an unrecognized one goes in `externals`).
+    var virtuals: [CGDirectDisplayID] = []
     var failNext = false
     var delay: TimeInterval = 0          // simulates a slow CGCompleteDisplayConfiguration
     var calls: [(CGDirectDisplayID, Bool)] = []
     let callsLock = NSLock()
 
     func snapshot() -> DisplaySnapshot {
-        DisplaySnapshot(builtinID: builtinOnline ? builtinID : nil,
-                        builtinActive: builtinOnline && builtinActive,
-                        externalIDs: externals)
+        let online = builtinOnline && !(offlineWhenDisabled && !builtinActive)
+        return DisplaySnapshot(builtinID: online ? builtinID : nil,
+                               builtinActive: online && builtinActive,
+                               externalIDs: externals, virtualIDs: virtuals)
+    }
+
+    /// What WindowServer does on macOS 27 when the last display goes away while the panel is off.
+    func unplugAllWithFallback(_ fallback: CGDirectDisplayID, recognized: Bool) {
+        externals = []
+        if recognized { virtuals = [fallback] } else { externals = [fallback] }
     }
 
     func setEnabled(_ display: CGDirectDisplayID, enabled: Bool) -> Result<Void, DisplayAPIError> {
@@ -296,6 +307,169 @@ test("Main thread is not blocked by a slow operation") {
     check(Date().timeIntervalSince(t0) < 0.1, "userToggle returned immediately")
     wait(0.8)
     check(!sys.builtinActive, "panel off after completion")
+}
+
+// MARK: - Display classification and issue #3 (fallback virtual display, macOS 27)
+
+func info(_ id: CGDirectDisplayID, builtin: Bool = false, active: Bool = true,
+          vendor: UInt32 = 0x4C2D, sizeMM: CGSize = CGSize(width: 800, height: 335)) -> DisplayInfo {
+    DisplayInfo(id: id, isBuiltin: builtin, isActive: active, isAsleep: false, isMain: false,
+                mirrorOf: kCGNullDirectDisplay, vendor: vendor, model: 0x1234, hasSerial: true,
+                sizeMM: sizeMM, pixelsWide: 3440, pixelsHigh: 1440, refreshRate: 100)
+}
+
+test("Classification: real monitor counts as external, virtual ones do not") {
+    let snap = DisplaySnapshot.build(from: [
+        info(1, builtin: true, vendor: 0x610),
+        info(2),                                                    // HDMI monitor
+        info(4, vendor: 0),                                         // WindowServer fallback
+        info(5, vendor: DisplayInfo.vendorUnknown),                 // no EDID
+        info(6, vendor: 0x1E6D, sizeMM: .zero),                     // EDID without a size
+        info(7, active: false),                                     // inactive monitor
+    ])
+    check(snap.builtinID == 1 && snap.builtinActive, "built-in \(String(describing: snap.builtinID))")
+    check(snap.externalIDs == [2], "external \(snap.externalIDs)")
+    check(snap.virtualIDs == [4, 5, 6], "virtual \(snap.virtualIDs)")
+    check(info(1, builtin: true, vendor: 0, sizeMM: .zero).virtualReason == nil, "built-in is never virtual")
+    check(info(4, vendor: 0).logDescription.contains("virtual"), "log line names the kind")
+    check(!info(2).logDescription.contains("serial=1"), "serial number is not logged")
+}
+
+test("Classification: displays measured on Mac16,1 / macOS 27.2.1 (issue #3)") {
+    func measured(_ id: CGDirectDisplayID, builtin: Bool, vendor: UInt32, model: UInt32, serial: Bool,
+                  mm: CGSize, px: (Int, Int), hz: Double) -> DisplayInfo {
+        DisplayInfo(id: id, isBuiltin: builtin, isActive: true, isAsleep: false, isMain: false,
+                    mirrorOf: kCGNullDirectDisplay, vendor: vendor, model: model, hasSerial: serial,
+                    sizeMM: mm, pixelsWide: px.0, pixelsHigh: px.1, refreshRate: hz)
+    }
+    let panel = measured(1, builtin: true, vendor: 0x610, model: 0xA05E, serial: true,
+                         mm: CGSize(width: 301, height: 196), px: (3024, 1964), hz: 120)
+    let hdmi = measured(3, builtin: false, vendor: 0x22F6, model: 0x6A25, serial: true,
+                        mm: CGSize(width: 802, height: 330), px: (3440, 1440), hz: 100)
+    // WindowServer fallback: the size is the 72 DPI estimate, not a real EDID size.
+    let fallback = measured(4, builtin: false, vendor: 0x756E6B6E, model: 0x76697274, serial: false,
+                            mm: CGSize(width: 677, height: 381), px: (1920, 1080), hz: 60)
+    check(fallback.isVirtual, "fallback display is virtual")
+    check(fallback.virtualReason == "virtual model", "reason \(String(describing: fallback.virtualReason))")
+    check(!hdmi.isVirtual, "HDMI monitor is external")
+    let before = DisplaySnapshot.build(from: [panel, hdmi])
+    check(before.externalIDs == [3] && before.virtualIDs.isEmpty, "before: \(before.externalIDs) \(before.virtualIDs)")
+    let after = DisplaySnapshot.build(from: [fallback])     // panel offline, HDMI unplugged
+    check(!after.hasExternal && after.virtualIDs == [4], "after: \(after.externalIDs) \(after.virtualIDs)")
+    check(after.builtinID == nil, "panel offline")
+    // Vendor alone also identifies it.
+    let otherModel = measured(5, builtin: false, vendor: 0x756E6B6E, model: 0x717, serial: false,
+                              mm: CGSize(width: 677, height: 381), px: (1920, 1080), hz: 60)
+    check(otherModel.virtualReason == "no EDID vendor", "reason \(String(describing: otherModel.virtualReason))")
+}
+
+test("Classification: only a virtual display → no external, cannot turn off") {
+    let snap = DisplaySnapshot.build(from: [info(1, builtin: true, vendor: 0x610), info(4, vendor: 0)])
+    check(!snap.hasExternal, "virtual display is not external")
+    let (sys, _, m) = makeEnv(autoOff: true) { s, _ in s.virtuals = [4] }
+    m.recoverOnLaunch(); settle()
+    wait(autoDelay + 0.3)
+    check(m.status == .noExternal, "status \(m.status)")
+    check(!m.canDisable, "canDisable should be false")
+    check(sys.calls.isEmpty, "auto-off must not fire for a virtual display: \(sys.calls)")
+}
+
+test("Helper: turning off is confirmed when the panel goes offline (macOS 27)") {
+    check(DisplayAPI.targetReached(enabled: false, online: true, active: false), "macOS 14: online, inactive")
+    check(DisplayAPI.targetReached(enabled: false, online: false, active: false), "macOS 27: offline")
+    check(!DisplayAPI.targetReached(enabled: false, online: true, active: true), "still on")
+    check(DisplayAPI.targetReached(enabled: true, online: true, active: true), "on")
+    check(!DisplayAPI.targetReached(enabled: true, online: false, active: false), "offline is not on")
+}
+
+test("macOS 27: panel offline while off → status, Turn On and restore still work") {
+    let (sys, prefs, m) = makeEnv { s, _ in s.externals = [2]; s.offlineWhenDisabled = true; s.builtinID = 1 }
+    m.recoverOnLaunch(); settle()
+    m.userToggle(); settle()
+    wait(grace + 0.4)
+    m.reconcile(reason: "event"); settle()
+    check(sys.snapshot().builtinID == nil, "simulator: panel offline")
+    check(m.status == .builtinDisabled(externalCount: 1), "status \(m.status)")
+    check(m.canEnable, "Turn On available")
+    check(prefs.disabledByUs, "recovery flag saved")
+    m.userToggle(); settle()
+    check(sys.builtinActive, "panel turned on from the menu")
+    check(sys.calls.last.map { $0.0 == 1 && $0.1 } == true, "turned on by the remembered ID: \(sys.calls)")
+}
+
+test("ISSUE #3: HDMI unplugged, fallback virtual display recognized → restored immediately") {
+    let (sys, prefs, m) = makeEnv { s, _ in s.externals = [2]; s.offlineWhenDisabled = true; s.builtinID = 1 }
+    m.recoverOnLaunch(); settle()
+    m.userToggle(); settle()
+    wait(grace + 0.4)
+    sys.unplugAllWithFallback(4, recognized: true)
+    m.failSafeCheck(); settle()
+    check(sys.builtinActive, "panel restored without waiting for the debounce")
+    sys.virtuals = []                       // the fallback goes away once the panel is back
+    m.reconcile(reason: "after debounce"); settle()
+    check(m.status == .noExternal, "status \(m.status)")
+    check(!prefs.disabledByUs, "recovery flag cleared")
+}
+
+test("ISSUE #3: fallback display NOT recognized as virtual → still restored (anchor check)") {
+    let (sys, _, m) = makeEnv { s, _ in s.externals = [2]; s.offlineWhenDisabled = true; s.builtinID = 1 }
+    m.recoverOnLaunch(); settle()
+    m.userToggle(); settle()
+    wait(grace + 0.4)
+    sys.unplugAllWithFallback(4, recognized: false)  // looks like a new external display
+    m.failSafeCheck(); settle()
+    check(sys.builtinActive, "panel restored by failSafeCheck")
+}
+
+test("ISSUE #3: unrecognized fallback seen only by reconcile → restored") {
+    let (sys, _, m) = makeEnv { s, _ in s.externals = [2]; s.offlineWhenDisabled = true; s.builtinID = 1 }
+    m.recoverOnLaunch(); settle()
+    m.userToggle(); settle()
+    wait(grace + 0.4)
+    sys.externals = [2, 4]                  // fallback shows up before the removal is visible
+    m.failSafeCheck(); settle()
+    m.reconcile(reason: "event"); settle()
+    check(!sys.builtinActive, "still off while the monitor is connected")
+    sys.externals = [4]
+    m.reconcile(reason: "event"); settle()
+    check(sys.builtinActive, "panel restored once only the new display is left")
+}
+
+test("Second monitor plugged in while off, first unplugged → panel restored") {
+    let (sys, _, m) = makeEnv { s, _ in s.externals = [2] }
+    m.recoverOnLaunch(); settle()
+    m.userToggle(); settle()
+    wait(grace + 0.1)
+    sys.externals = [2, 3]
+    m.failSafeCheck(); settle()
+    m.reconcile(reason: "event"); settle()
+    check(!sys.builtinActive, "still off with both connected")
+    sys.externals = [3]
+    m.failSafeCheck(); settle()
+    check(sys.builtinActive, "restored: none of the displays it was turned off for is left")
+    wait(grace + 0.1)
+    m.reconcile(reason: "event"); settle()
+    check(m.canDisable, "can be turned off again for the new monitor")
+}
+
+test("Panel turned off by another tool, monitor swapped for an unknown display → restored") {
+    let (sys, _, m) = makeEnv { s, _ in s.externals = [2] }
+    m.recoverOnLaunch(); settle()
+    sys.builtinActive = false
+    m.reconcile(reason: "event"); settle()
+    check(m.isBuiltinDisabled, "synced as off")
+    sys.externals = [4]
+    m.failSafeCheck(); settle()
+    check(sys.builtinActive, "panel restored")
+}
+
+test("Diagnostics dump does not change state") {
+    let (sys, _, m) = makeEnv { s, _ in s.externals = [2] }
+    m.recoverOnLaunch(); settle()
+    m.userToggle(); settle()
+    m.logDiagnostics(); settle()
+    check(!sys.builtinActive && m.isBuiltinDisabled, "still off")
+    check(sys.calls.count == 1, "no extra API calls: \(sys.calls)")
 }
 
 // MARK: - Launch at Login
