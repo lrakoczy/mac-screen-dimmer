@@ -67,7 +67,7 @@ git push origin v1.2.3
 | Last external display unplugged | The built-in display comes back immediately, without debouncing |
 | One of several external displays unplugged | The panel stays off – *any* of the displays connected when it was turned off counts |
 | Displays connected while the panel is off | They do not keep it off: once all displays it was turned off for are gone, the panel comes back. Turn it off again to use the new display alone |
-| Virtual displays (e.g. the 1920×1080 fallback display macOS creates when the last monitor is unplugged) | Never count as external displays. A display without an EDID vendor ID or physical size is treated as virtual, so the panel cannot be turned off with only such a display connected |
+| Virtual displays (e.g. the 1920×1080 fallback display macOS creates when the last monitor is unplugged) | Never count as external displays. A display without an EDID vendor ID (or with the fallback display's `virt` model number) is treated as virtual, so the panel cannot be turned off with only such a display connected |
 | Quit, logout, `SIGTERM` / `SIGINT` / `SIGHUP` | The built-in display is restored before the app exits |
 | `kill -9` or crash | The state is persisted in UserDefaults; the next launch restores the display before doing anything else |
 | Burst of events (cable, input switching, wake) | Events are coalesced (0.75 s) and the state is always re-read from the system |
@@ -89,7 +89,7 @@ If none is found, the app does not crash: the menu shows "Not supported" and the
 
 - **macOS 14.8 (Intel):** a panel turned off this way **stays in the list of online displays**, it only reports `CGDisplayIsActive == false`. The app derives its state from that flag. With the lid closed the panel disappears from the list entirely.
 - **macOS 27 (Apple Silicon, [#3](https://github.com/lrakoczy/mac-screen-dimmer/issues/3)):** a panel turned off this way **disappears from the list of online displays**, as with the lid closed. The app then relies on its own persisted state, and the helper treats "gone from the list" as a confirmed turn-off.
-- When the last physical display is unplugged while the panel is off, WindowServer brings up a fallback **virtual display** (1920×1080, a new ID each time) that is online and active. It is not counted as an external display, and since it was not connected when the panel went off it cannot keep the panel off either.
+- When the last physical display is unplugged while the panel is off, WindowServer brings up a fallback **virtual display** (1920×1080, a new ID each time) that is online and active. It is not counted as an external display, and since it was not connected when the panel went off it cannot keep the panel off either. Measured on Mac16,1 (M4), macOS 27.2.1: vendor `unkn` (`0x756E6B6E`), model `virt` (`0x76697274`), no serial number. Its reported size (677×381 mm) is only CoreGraphics' 72 DPI estimate for a display without an EDID, so the size alone does not tell real and virtual displays apart. Confirmed fixed on that machine: the panel comes back about 0.2 s after the HDMI cable is unplugged.
 - The built-in display ID can change (e.g. with GPU switching). Turning it back on always uses a fresh reading.
 - When turning the panel off, `CGCompleteDisplayConfiguration` often returns only after a **10 s** timeout, even though the WindowServer logs show the reconfiguration finishing in ~0.3 s. This depends on system state, not on the app. Killing the waiting process does not undo the change. The app therefore applies changes in a short-lived helper process (`ScreenDimmer --configure-display <id> on|off`) off the main thread, polls the real display state every 0.1 s and ends the helper as soon as the target state is reached, so a toggle takes about 0.5 s. If the helper cannot be started, the change is applied in the app's own process.
 
@@ -105,7 +105,7 @@ Strings live in `Resources/en.lproj/Localizable.strings` and `Resources/pl.lproj
 ./scripts/test.sh
 ```
 
-Runs 35 logic scenarios against a display simulator (including the macOS 27 behavior and the fallback virtual display) that reproduces the measured system behavior. Real displays are never touched.
+Runs 36 logic scenarios against a display simulator (including the macOS 27 behavior and the fallback virtual display) that reproduces the measured system behavior. Real displays are never touched.
 
 ### Manual checklist (especially on Apple Silicon and newer macOS)
 

@@ -7,6 +7,8 @@ import os
 struct DisplayInfo: Equatable {
     /// `kDisplayVendorIDUnknown` ('unkn') – reported when there is no EDID to read the vendor from.
     static let vendorUnknown: UInt32 = 0x756E_6B6E
+    /// 'virt' – model number of the WindowServer fallback display (measured on macOS 27.2.1, issue #3).
+    static let modelVirtual: UInt32 = 0x7669_7274
 
     let id: CGDirectDisplayID
     let isBuiltin: Bool
@@ -18,7 +20,8 @@ struct DisplayInfo: Equatable {
     let vendor: UInt32
     let model: UInt32
     let hasSerial: Bool
-    /// Physical size from EDID in millimeters (zero, or an estimate, when there is no EDID).
+    /// Physical size from EDID in millimeters. Without an EDID, CoreGraphics returns an estimate
+    /// from the pixel size at 72 DPI (1920×1080 → 677×381 mm), so this is not proof of a real monitor.
     let sizeMM: CGSize
     let pixelsWide: Int
     let pixelsHigh: Int
@@ -30,8 +33,13 @@ struct DisplayInfo: Equatable {
     /// brings up a fallback `VirtualDisplay` (1920×1080, new ID every time, issue #3). It is
     /// online and active but is not a monitor, so it must not count as an external display.
     /// Real monitors (and HDMI dummy plugs) have an EDID with a vendor ID; the fallback does not.
+    ///
+    /// Measured on Mac16,1 (M4), macOS 27.2.1: `vendor='unkn' model='virt' serial=no
+    /// size=677x381mm px=1920x1080 60Hz`. The size is the 72 DPI estimate, so only the
+    /// vendor and model identify it.
     var virtualReason: String? {
         if isBuiltin { return nil }
+        if model == Self.modelVirtual { return "virtual model" }
         if vendor == 0 || vendor == Self.vendorUnknown || vendor == 0xFFFF_FFFF { return "no EDID vendor" }
         if sizeMM.width < 1 || sizeMM.height < 1 { return "no physical size" }
         return nil

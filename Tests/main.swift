@@ -335,6 +335,34 @@ test("Classification: real monitor counts as external, virtual ones do not") {
     check(!info(2).logDescription.contains("serial=1"), "serial number is not logged")
 }
 
+test("Classification: displays measured on Mac16,1 / macOS 27.2.1 (issue #3)") {
+    func measured(_ id: CGDirectDisplayID, builtin: Bool, vendor: UInt32, model: UInt32, serial: Bool,
+                  mm: CGSize, px: (Int, Int), hz: Double) -> DisplayInfo {
+        DisplayInfo(id: id, isBuiltin: builtin, isActive: true, isAsleep: false, isMain: false,
+                    mirrorOf: kCGNullDirectDisplay, vendor: vendor, model: model, hasSerial: serial,
+                    sizeMM: mm, pixelsWide: px.0, pixelsHigh: px.1, refreshRate: hz)
+    }
+    let panel = measured(1, builtin: true, vendor: 0x610, model: 0xA05E, serial: true,
+                         mm: CGSize(width: 301, height: 196), px: (3024, 1964), hz: 120)
+    let hdmi = measured(3, builtin: false, vendor: 0x22F6, model: 0x6A25, serial: true,
+                        mm: CGSize(width: 802, height: 330), px: (3440, 1440), hz: 100)
+    // WindowServer fallback: the size is the 72 DPI estimate, not a real EDID size.
+    let fallback = measured(4, builtin: false, vendor: 0x756E6B6E, model: 0x76697274, serial: false,
+                            mm: CGSize(width: 677, height: 381), px: (1920, 1080), hz: 60)
+    check(fallback.isVirtual, "fallback display is virtual")
+    check(fallback.virtualReason == "virtual model", "reason \(String(describing: fallback.virtualReason))")
+    check(!hdmi.isVirtual, "HDMI monitor is external")
+    let before = DisplaySnapshot.build(from: [panel, hdmi])
+    check(before.externalIDs == [3] && before.virtualIDs.isEmpty, "before: \(before.externalIDs) \(before.virtualIDs)")
+    let after = DisplaySnapshot.build(from: [fallback])     // panel offline, HDMI unplugged
+    check(!after.hasExternal && after.virtualIDs == [4], "after: \(after.externalIDs) \(after.virtualIDs)")
+    check(after.builtinID == nil, "panel offline")
+    // Vendor alone also identifies it.
+    let otherModel = measured(5, builtin: false, vendor: 0x756E6B6E, model: 0x717, serial: false,
+                              mm: CGSize(width: 677, height: 381), px: (1920, 1080), hz: 60)
+    check(otherModel.virtualReason == "no EDID vendor", "reason \(String(describing: otherModel.virtualReason))")
+}
+
 test("Classification: only a virtual display → no external, cannot turn off") {
     let snap = DisplaySnapshot.build(from: [info(1, builtin: true, vendor: 0x610), info(4, vendor: 0)])
     check(!snap.hasExternal, "virtual display is not external")

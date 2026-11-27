@@ -52,8 +52,16 @@ final class DisplayEventMonitor {
 
     fileprivate func handleReconfiguration(display: CGDirectDisplayID, flags: CGDisplayChangeSummaryFlags) {
         // Notice level: unlike debug/info it is persisted, so `log show` still has it after the fact.
-        log.notice("Display event #\(display) \(Self.describe(flags), privacy: .public) builtin=\(CGDisplayIsBuiltin(display) != 0) online=\(CGDisplayIsOnline(display) != 0) active=\(CGDisplayIsActive(display) != 0)")
+        log.notice("Display event #\(display) \(Self.describe(flags), privacy: .public) \(Self.stateDescription(display, flags: flags), privacy: .public)")
         handle(reason: "display reconfiguration", allowAutoOff: false)
+    }
+
+    /// State of the display when the event is handled. For a display that is gone, CoreGraphics
+    /// answers with another display's properties (seen in issue #3: a removed monitor reported
+    /// `builtin=true online=true`), so only `online=false` is logged then.
+    static func stateDescription(_ display: CGDirectDisplayID, flags: CGDisplayChangeSummaryFlags) -> String {
+        guard !flags.contains(.removeFlag), CGDisplayIsOnline(display) != 0 else { return "online=false" }
+        return "builtin=\(CGDisplayIsBuiltin(display) != 0) online=true active=\(CGDisplayIsActive(display) != 0)"
     }
 
     /// Human-readable flag names, e.g. `[add,enabled]`.
